@@ -8,8 +8,28 @@
 include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/image.mk
 
+FAT32_BLOCK_SIZE=1024
+FAT32_BLOCKS=$(shell echo $$(($(CONFIG_MEDIATEK_SD_BOOT_PARTSIZE)*1024*1024/$(FAT32_BLOCK_SIZE))))
+
 # for arm
 KERNEL_LOADADDR := 0x80008000
+
+define Build/mediatek-sdcard
+        rm -f $@.boot
+        mkfs.fat $@.boot -C $(FAT32_BLOCKS)
+
+        mcopy -i $@.boot $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-uEnv.txt ::uEnv.txt
+        mcopy -i $@.boot $(IMAGE_KERNEL) ::uImage
+        ./gen_mt7623_sdcard_img.sh $@ \
+                $(STAGING_DIR_IMAGE)/bpi-r2-preloader.bin \
+                $(STAGING_DIR_IMAGE)/$(DEVICE_NAME)-uboot-mediatek.bin \
+                $@.boot \
+                $(IMAGE_ROOTFS) \
+                $(CONFIG_MEDIATEK_SD_BOOT_PARTSIZE) \
+                $(CONFIG_TARGET_ROOTFS_PARTSIZE)
+        rm -f $@.boot
+
+endef
 
 # for arm64
 ifeq ($(SUBTARGET),mt7622)
@@ -40,9 +60,14 @@ define Device/Default
   IMAGE/sysupgrade.bin := append-kernel | append-rootfs | pad-rootfs | append-metadata
   SUPPORTED_DEVICES := $(subst _,$(comma),$(1))
 ifeq ($(SUBTARGET),mt7623)
+  DEVICE_VARS := MEDIATEK_UBOOT
   KERNEL_NAME := zImage
   KERNEL := kernel-bin | append-dtb | uImage none
   KERNEL_INITRAMFS := kernel-bin | append-dtb | uImage none
+  FILESYSTEMS += ext4
+  IMAGES := sysupgrade.tar sdcard.img.gz
+  IMAGE/sysupgrade.tar := sysupgrade-tar | append-metadata
+  IMAGE/sdcard.img.gz := mediatek-sdcard | gzip | append-metadata
 else
   KERNEL_NAME := Image
   KERNEL = kernel-bin | lzma | fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb
@@ -62,9 +87,4 @@ ifeq ($(SUBTARGET),mt7629)
 include mt7629.mk
 endif
 
-define Image/Build
-	$(call Image/Build/$(1),$(1))
-endef
-
 $(eval $(call BuildImage))
-
